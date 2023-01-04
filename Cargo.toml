@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+    "tss_client_server",
+    "tss_share_2_server",
+    "tss_sm_manager",
+    "tss_sm_signing",
+]
