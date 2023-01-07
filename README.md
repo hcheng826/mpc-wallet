@@ -1,4 +1,4 @@
-# open-defenfer-rust
+# open-defender-rust
 
 * Contains the 3 servers that is currently written in Rust: `tss_share_2_server`, `tss_client_server` and `tss_sm_manager`
 * The ZenGo library `multi-party-ecdsa` is referred to as submodule

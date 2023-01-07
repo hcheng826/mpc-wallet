@@ -2,9 +2,10 @@
 extern crate rocket;
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::http::Header;
-use rocket::serde::{json::Json, Deserialize};
+use rocket::serde::{json::Json, Serialize, Deserialize};
 use rocket::{Request, Response};
 use std::path::PathBuf;
+use dotenv::dotenv;
 
 #[get("/")]
 fn index() -> &'static str {
@@ -14,19 +15,26 @@ fn index() -> &'static str {
 #[derive(Deserialize)]
 #[serde(crate = "rocket::serde")]
 struct SignReq {
-    msg: String,
-    room_id: String,
+    from_address: String,
+    uuid: String,
+    message: String,
 }
 
-#[post("/", format = "json", data = "<sign_req>")]
-async fn sign(sign_req: Json<SignReq>) -> &'static str {
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct SignRes {
+    success: bool,
+}
+
+// #[post("/sign", format = "json", data = "<sign_req>")]
+async fn _sign(sign_req: Json<SignReq>) -> &'static str {
     let sign_result = match tss_sm_signing::sign(
-        sign_req.msg.to_string(),
+        sign_req.message.to_string(),
         PathBuf::from(r"./examples/local-share2.json"),
         vec![1, 2],
         surf::Url::parse("http://localhost:8000").unwrap(),
         // surf::Url::parse("https://4759-60-250-148-100.jp.ngrok.io").unwrap(),
-        sign_req.room_id.to_string(),
+        sign_req.uuid.to_string(),
     )
     .await
     {
@@ -39,6 +47,11 @@ async fn sign(sign_req: Json<SignReq>) -> &'static str {
     "Server Good"
 }
 
+#[post("/sign", format = "json", data = "<sign_req>")]
+async fn sign(sign_req: Json<SignReq>) -> Json<SignRes> {
+    Json(SignRes { success: true })
+}
+
 /// Catches all OPTION requests in order to get the CORS related Fairing triggered.
 #[options("/<_..>")]
 fn all_options() {
@@ -47,11 +60,17 @@ fn all_options() {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let figment = rocket::Config::figment().merge(("port", 8002));
+    dotenv().ok();
+    let figment = rocket::Config::figment().merge((
+        "port",
+        std::env::var("PORT")
+            .expect("PORT must be set.")
+            .parse::<u16>()
+            .unwrap(),
+    ));
     let _rocket_instance = rocket::custom(figment)
         .attach(Cors)
-        .mount("/", routes![index])
-        .mount("/sign", routes![sign, all_options])
+        .mount("/", routes![index, sign, all_options])
         .launch()
         .await?;
     Ok(())

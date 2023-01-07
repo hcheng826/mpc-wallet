@@ -13,6 +13,7 @@ use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, RwLock};
+use dotenv::dotenv;
 
 #[rocket::get("/rooms/<room_id>/subscribe")]
 async fn subscribe(
@@ -180,9 +181,17 @@ struct IssuedUniqueIdx {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv().ok();
     let figment = rocket::Config::figment().merge((
         "limits",
         rocket::data::Limits::new().limit("string", 100.megabytes()),
+    ))
+    .merge((
+        "port",
+        std::env::var("PORT")
+            .expect("PORT must be set.")
+            .parse::<u16>()
+            .unwrap(),
     ));
     let _ = rocket::custom(figment)
         .mount("/", rocket::routes![subscribe, issue_idx, broadcast])
