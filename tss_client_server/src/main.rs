@@ -22,7 +22,7 @@ struct SendTxReq {
 #[serde(crate = "rocket::serde")]
 struct SendTxRes {
     success: bool,
-    info: Option<String>
+    info: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -71,24 +71,42 @@ async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
         .send()
         .await;
 
-    let res_text_result  = match call_tx_sender_result {
+    let res_text_result = match call_tx_sender_result {
         Ok(res) => res.text().await,
-        Err(_) => return Json(SendTxRes { success: false, info: Some("fail to call tx sender".to_string()) })
+        Err(_) => {
+            return Json(SendTxRes {
+                success: false,
+                info: Some("fail to call tx sender".to_string()),
+            })
+        }
     };
 
     let res_parsed_result: Result<TxSenderRes, serde_json::Error> = match res_text_result {
         Ok(res_text) => serde_json::from_str(&res_text),
-        Err(_) => return Json(SendTxRes { success: false, info: Some("fail to get tx sender response text".to_string()) })
+        Err(_) => {
+            return Json(SendTxRes {
+                success: false,
+                info: Some("fail to get tx sender response text".to_string()),
+            })
+        }
     };
 
     let tx_sender_res = match res_parsed_result {
         Ok(tx_sender_res) => tx_sender_res,
-        Err(_) => return Json(SendTxRes { success: false, info: Some("fail on parsing tx sender response".to_string()) })
+        Err(_) => {
+            return Json(SendTxRes {
+                success: false,
+                info: Some("fail on parsing tx sender response".to_string()),
+            })
+        }
     };
 
     println!("tx_sender_res.success: {}", tx_sender_res.success);
     if tx_sender_res.success == false {
-        return Json(SendTxRes { success: false, info: Some("tx simulation failed".to_string()) });
+        return Json(SendTxRes {
+            success: false,
+            info: Some("tx simulation failed".to_string()),
+        });
     }
 
     // talk to SM
@@ -97,19 +115,32 @@ async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
 
     let local_share_path = match get_local_share_by_address(&send_tx_req.from_address) {
         Some(local_share_path) => local_share_path,
-        None => return Json(SendTxRes { success: false, info: Some("cannot find local-share path by address".to_string()) })
+        None => {
+            return Json(SendTxRes {
+                success: false,
+                info: Some("cannot find local-share path by address".to_string()),
+            })
+        }
     };
 
     // TODO: implement timeout for this function
-    let _singature = tss_sm_signing::sign(
+    let _singature = match tss_sm_signing::sign(
         tx_sender_res.message_to_sign,
         PathBuf::from(local_share_path),
-        vec![1, 2],
+        vec![2, 1],
         surf::Url::parse(&sm_manager_url).unwrap(),
         tx_sender_res.id.to_string(),
     )
-    .await;
-    Json(SendTxRes { success: true, info: None })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => format!("error in sign {:?}", error),
+    };
+
+    Json(SendTxRes {
+        success: true,
+        info: None,
+    })
 }
 
 #[tokio::main]
