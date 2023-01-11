@@ -1,5 +1,5 @@
 [package]
-name = "tss_sm_signing"
+name = "tss_sm_client"
 version = "0.1.0"
 edition = "2021"
 

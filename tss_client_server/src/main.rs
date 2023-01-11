@@ -5,6 +5,8 @@ use reqwest::Client;
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::vec;
+use uuid::Uuid;
 
 #[get("/")]
 fn index() -> &'static str {
@@ -33,6 +35,12 @@ struct TxSenderRes {
     id: usize,
 }
 
+lazy_static::lazy_static! {
+    static ref PORT: String = std::env::var("PORT").expect("PORT should be set");
+    static ref TX_SENDER_URL: String = std::env::var("TX_SENDER_URL").expect("TX_SENDER_URL should be set");
+    static ref SM_MANAGER_URL: String = std::env::var("SM_MANAGER_URL").expect("SM_MANAGER_URL should be set");
+}
+
 // TODO: Will be replaced by DB
 fn get_local_share_by_address(address: &str) -> Option<&str> {
     let address_book: HashMap<&str, &str> = HashMap::from([
@@ -59,14 +67,12 @@ fn get_local_share_by_address(address: &str) -> Option<&str> {
 #[post("/send-tx", format = "json", data = "<send_tx_req>")]
 async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
     // talk to tx sender for simulation
-    let tx_sender_url =
-        std::env::var("TX_SENDER_URL").unwrap_or_else(|_| "http://localhost:8004".to_string());
     let client = Client::new();
     let mut body = std::collections::HashMap::new();
     body.insert("from_address", &send_tx_req.from_address);
     body.insert("tx_data", &send_tx_req.tx_data);
     let call_tx_sender_result = client
-        .post(format!("{}{}", tx_sender_url, "/request-tx"))
+        .post(format!("{}{}", *TX_SENDER_URL, "/request-tx"))
         .json(&body)
         .send()
         .await;
@@ -110,9 +116,6 @@ async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
     }
 
     // talk to SM
-    let sm_manager_url =
-        std::env::var("SM_MANAGER_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
-
     let local_share_path = match get_local_share_by_address(&send_tx_req.from_address) {
         Some(local_share_path) => local_share_path,
         None => {
@@ -124,11 +127,11 @@ async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
     };
 
     // TODO: implement timeout for this function
-    let _singature = match tss_sm_signing::sign(
+    let _singature = match tss_sm_client::sign(
         tx_sender_res.message_to_sign,
         PathBuf::from(local_share_path),
         vec![2, 1],
-        surf::Url::parse(&sm_manager_url).unwrap(),
+        surf::Url::parse(&SM_MANAGER_URL).unwrap(),
         tx_sender_res.id.to_string(),
     )
     .await
@@ -143,20 +146,71 @@ async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
     })
 }
 
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct NewKeyRes {
+    success: bool,
+    user_id: String,
+    address: Option<Vec<u8>>,
+    info: Option<String>,
+}
+
+#[post("/new-key")]
+async fn new_key() -> Json<NewKeyRes> {
+    // TODO: replace by DB
+    let user_id = Uuid::new_v4();
+
+    let client = Client::new();
+    let mut body = std::collections::HashMap::new();
+    body.insert("userId", user_id.to_string());
+    let call_tx_sender_result = client
+        .post(format!("{}{}", *TX_SENDER_URL, "/new-key"))
+        .json(&body)
+        .send()
+        .await;
+
+    let _res = match call_tx_sender_result {
+        Ok(res) => res.text().await,
+        Err(_) => {
+            return Json(NewKeyRes {
+                success: false,
+                user_id: user_id.to_string(),
+                address: None,
+                info: Some("fail to call tx sender".to_string()),
+            })
+        }
+    };
+
+    println!("user_id: {}", user_id);
+    let _local_key = tss_sm_client::keygen(
+        surf::Url::parse(&SM_MANAGER_URL).unwrap(),
+        user_id.to_string(),
+        2,
+        1,
+        2,
+    )
+    .await
+    .expect("unwrap local key");
+
+    // println!("{:?}", local_key.y_sum_s);
+    // TODO: write local_key to db or save to file
+
+    Json(NewKeyRes {
+        success: true,
+        user_id: user_id.to_string(),
+        address: Some([1, 2, 3].to_vec()),
+        info: None,
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     let figment = rocket::Config::figment()
-        .merge((
-            "port",
-            std::env::var("PORT")
-                .expect("PORT must be set.")
-                .parse::<u16>()
-                .unwrap(),
-        ))
+        .merge(("port", PORT.parse::<u16>().unwrap()))
         .merge(("address", "0.0.0.0"));
     let _rocket_instance = rocket::custom(figment)
-        .mount("/", routes![index, send_tx])
+        .mount("/", routes![index, send_tx, new_key])
         .launch()
         .await?;
     Ok(())

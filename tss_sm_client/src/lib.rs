@@ -6,6 +6,7 @@ use futures::{SinkExt, StreamExt, TryStreamExt};
 use curv::arithmetic::Converter;
 use curv::BigInt;
 
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::state_machine::keygen::Keygen;
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::state_machine::sign::{
     OfflineStage, SignManual,
 };
@@ -14,6 +15,8 @@ use round_based::Msg;
 
 mod gg20_sm_client;
 use gg20_sm_client::join_computation;
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::state_machine::keygen::LocalKey;
+use curv::elliptic::curves::secp256_k1::Secp256k1;
 
 pub async fn sign(
     data_to_sign: String,
@@ -83,4 +86,28 @@ pub async fn sign(
     let signature = serde_json::to_string(&signature).context("serialize signature")?;
 
     Ok(signature)
+}
+
+pub async fn keygen(
+    sm_manager_url: surf::Url,
+    room: String,
+    index: u16,
+    threshold: u16,
+    number_of_parties: u16,
+) -> Result<LocalKey<Secp256k1>> {
+    let (_i, incoming, outgoing) = join_computation(sm_manager_url, &room)
+        .await
+        .context("join computation")?;
+
+    let incoming = incoming.fuse();
+    tokio::pin!(incoming);
+    tokio::pin!(outgoing);
+
+    let keygen = Keygen::new(index, threshold, number_of_parties)?;
+    let output = AsyncProtocol::new(keygen, incoming, outgoing)
+        .run()
+        .await
+        .map_err(|e| anyhow!("protocol execution terminated with error: {}", e))?;
+
+    Ok(output)
 }
