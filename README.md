@@ -3,29 +3,67 @@
 - Contains the 3 servers that is currently written in Rust: `tss_share_2_server`, `tss_client_server` and `tss_sm_manager`
 - The ZenGo library `multi-party-ecdsa` is referred to as submodule
 - `tss_sm_client` is used as a functional library, no main function. It's used by `share_2_server` and `client_server`
-- The command to start each server is put below
+
+## API documentation
+
+https://documenter.getpostman.com/view/24031838/2s8ZDR8RFF
+
+Can be edited by fdc.ai.dev@gmail.com account on Postman
 
 ## tss architecture
 
-Sign Flow
+### Key gen
+
+![image](https://user-images.githubusercontent.com/23033847/212010009-0b0a9be2-1095-4b15-a2a4-2c63f08b87ef.png)
+Note
+
+- Step 2 is done by RabbitMQ with queue name: `request-@open-defender/tss-tx-sender: share-2-server-keygen-signal` (config in `.env`)
+
+### Sign
+
 ![image](https://user-images.githubusercontent.com/23033847/210502433-785f4faf-8e85-4403-9163-507c17137ee1.png)
+Note
+
+- Step 3 is done by RabbitMQ with queue name: `request-@open-defender/tss-tx-sender: share-2-server-sign-signal` (config in `.env`)
 
 ## tss_client_server
 
 ```bash
 cargo run -p tss_client_server
+# or
+cd tss_client_server
+cargo run
 ```
 
-1. send tx request to tx sender api `/request-tx`
-2. if the response says the simulation succeeded, talk to sm manager to contribute signature
+### Key gen
+
+1. the api is `/new-key`
+2. send key gen request to tx sender api `/new-key`
+3. after receiving the response ack from share 2, talk to sm manager to participate key gen, and get the local-share key
+
+### Sign
+
+1. the api is `/send-tx`
+2. send tx request to tx-sender api `/request-tx`
+3. if the response says the simulation succeeded, talk to sm manager to contribute to signature
 
 ## tss_share_2_server
 
 ```bash
 cargo run -p tss_share_2_server
+# or
+cd tss_share_2_server
+cargo run
 ```
 
-1. consume the sign signal from the RabbitMQ
+### Key gen
+
+1. consuem the key gen signal from the queue
+2. talk to sm manager to participate key gen, and save the resulting local-share key for corresponding user
+
+### Sign
+
+1. consume the sign signal from the queue
 2. signature can be generated from sm manager
 3. call tx sender api `/submit-tx` and the signature will be written into its db
 
@@ -33,4 +71,11 @@ cargo run -p tss_share_2_server
 
 ```bash
 cargo run -p tss_sm_manager
+# or
+cd tss_sm_manager
+cargo run
 ```
+
+### Key gen and sign
+
+Just react to whatever requests come from client server and share 2 server
