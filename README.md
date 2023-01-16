@@ -1,6 +1,6 @@
 # open-defender-rust
 
-- Contains the 3 servers that is currently written in Rust: `tss_share_2_server`, `tss_client_server` and `tss_sm_manager`
+- Contains the 3 servers that is currently written in Rust: `tss_share_2_server`, `tss_client_server` and `tss_sm_manager`. The component `Tx Sender` in the following diagram is implemented in Nodejs and is maintained here: https://github.com/FDC-AI/open-defender/tree/develop/packages/tss-tx-sender
 - The ZenGo library `multi-party-ecdsa` is referred to as submodule
 - `tss_sm_client` is used as a functional library, no main function. It's used by `share_2_server` and `client_server`
 
@@ -14,15 +14,14 @@ Can be edited by fdc.ai.dev@gmail.com account on Postman
 
 ### Key gen
 
-![image](https://user-images.githubusercontent.com/23033847/212010009-0b0a9be2-1095-4b15-a2a4-2c63f08b87ef.png)
-Note
+![MPC TSS chart - key gen](https://user-images.githubusercontent.com/23033847/212588917-985a2cd5-ac7a-49eb-9529-11abcd3155f1.jpeg)
+
 
 - Step 2 is done by RabbitMQ with queue name: `request-@open-defender/tss-tx-sender: share-2-server-keygen-signal` (config in `.env`)
 
 ### Sign
 
-![image](https://user-images.githubusercontent.com/23033847/210502433-785f4faf-8e85-4403-9163-507c17137ee1.png)
-Note
+![MPC TSS chart - sign](https://user-images.githubusercontent.com/23033847/212588965-273394fa-d70c-447c-a173-af8f06c3db84.jpeg)
 
 - Step 3 is done by RabbitMQ with queue name: `request-@open-defender/tss-tx-sender: share-2-server-sign-signal` (config in `.env`)
 
