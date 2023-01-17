@@ -28,8 +28,6 @@ Can be edited by fdc.ai.dev@gmail.com account on Postman
 ## tss_client_server
 
 ```bash
-cargo run -p tss_client_server
-# or
 cd tss_client_server
 cargo run
 ```
@@ -49,8 +47,6 @@ cargo run
 ## tss_share_2_server
 
 ```bash
-cargo run -p tss_share_2_server
-# or
 cd tss_share_2_server
 cargo run
 ```
@@ -69,8 +65,6 @@ cargo run
 ## tss_sm_manager
 
 ```bash
-cargo run -p tss_sm_manager
-# or
 cd tss_sm_manager
 cargo run
 ```

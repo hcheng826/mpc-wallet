@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use anyhow::{anyhow, Context, Result};
 use futures::{SinkExt, StreamExt, TryStreamExt};
 
@@ -20,16 +18,12 @@ use curv::elliptic::curves::secp256_k1::Secp256k1;
 
 pub async fn sign(
     data_to_sign: String,
-    local_share: PathBuf,
+    local_share: String,
     parties: Vec<u16>,
     address: surf::Url,
     room: String,
 ) -> Result<String> {
-    let local_share = tokio::fs::read(local_share)
-        .await
-        .context("cannot read local share")?;
-
-    let local_share = serde_json::from_slice(&local_share).context("parse local share")?;
+    let local_share = serde_json::from_str(&local_share).context("parse local share")?;
     let number_of_parties = parties.len();
 
     let (i, incoming, outgoing) = join_computation(address.clone(), &format!("{}-offline", room))

@@ -1,33 +1,11 @@
+pub mod db;
+
 use dotenv::dotenv;
 use futures::StreamExt;
 use lapin::{options::*, types::FieldTable, Connection, ConnectionProperties};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
-
-// TODO: Will be replaced by DB
-fn get_local_share_by_address(address: &str) -> Option<&str> {
-    let address_book: HashMap<&str, &str> = HashMap::from([
-        (
-            "0x159D46720180113e2Ce97af425366778ECCcbA9C",
-            "./shares/local-share2-0.json",
-        ),
-        (
-            "0xF910Bd97b8F732Ce06c959DFDcE6De19623060B4",
-            "./shares/local-share2-1.json",
-        ),
-        (
-            "0x200dfB01148e580c59B53C6a35de9495cf10cf93",
-            "./shares/local-share2-2.json",
-        ),
-        (
-            "0xd1eD919ebF88baFab12FBCe1A6d1e1318a75b05b",
-            "./shares/local-share2-3.json",
-        ),
-    ]);
-    return address_book.get(address).copied();
-}
 
 lazy_static! {
     static ref RABBITMQ_HOST: String =
@@ -108,12 +86,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let sign_data = serde_json::from_str::<SignSignal>(&data)
                     .expect("error on parsing sign signal");
 
-                let local_share_path = get_local_share_by_address(&sign_data.from_address).unwrap();
+                let db_conn = &mut db::establish_connection();
+                let local_share = match db::get_local_share(db_conn, &sign_data.from_address) {
+                    Ok(result) => result,
+                    Err(e) => format!("error getting local share: {}", e),
+                };
 
                 let sign_result = match tss_sm_client::sign(
                     sign_data.message.to_string(),
-                    PathBuf::from(local_share_path),
-                    vec![2, 1],
+                    local_share,
+                    vec![1, 2],
                     surf::Url::parse(&*SM_MANAGER_URL).unwrap(),
                     sign_data.id.to_string(),
                 )
@@ -135,7 +117,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .send()
                     .await
                     .expect("error on calling tx sender");
+
                 delivery.ack(BasicAckOptions::default()).await.expect("ack");
+                println!("delivery ack: {:?}", delivery);
             });
         }
     });
@@ -146,30 +130,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let delivery = delivery.expect("error in consuming message");
                 let delivery_str = std::str::from_utf8(&delivery.data)
                     .expect("cannot get data field from RabbitMQ message");
-                let data = serde_json::from_str::<RabbitMQDelivery>(delivery_str)
+                let id = serde_json::from_str::<RabbitMQDelivery>(delivery_str)
                     .expect("error on parsing RabbitMQ message")
                     .data;
-                println!("data: {}", data);
-                // let user_id =
-                //     serde_json::from_str::<String>(&data).expect("error on parsing user_id");
 
-                // let local_share_path = get_local_share_by_address(&sign_data.from_address).unwrap();
-
-                let _sign_result = match tss_sm_client::keygen(
+                let keygen_result = match tss_sm_client::keygen(
                     surf::Url::parse(&*SM_MANAGER_URL).unwrap(),
-                    data,
+                    id.to_owned(),
                     1,
                     1,
                     2,
                 )
                 .await
                 {
-                    Ok(result) => serde_json::to_string(&result).unwrap(),
+                    Ok(result) => {
+                        let pubkey = serde_json::to_string(&result.y_sum_s)
+                            .expect("cannot get y_sum_s from result");
+                        let local_key = serde_json::to_string(&result).unwrap();
+                        let db_conn = &mut db::establish_connection();
+                        let key_inserted = db::insert_new_key(
+                            db_conn,
+                            id.as_str().parse::<i32>().expect("error parsing id"),
+                            &pubkey,
+                            &local_key,
+                        );
+                        format!("result of key insertion: {:?}", key_inserted)
+                    }
                     Err(error) => format!("error in keygen {:?}", error),
                 };
 
-                // println!("{:?}", sign_result);
-                // TODO: write sign_result to db or save to file
+                println!("keygen_result: {}", keygen_result);
                 delivery.ack(BasicAckOptions::default()).await.expect("ack");
             });
         }

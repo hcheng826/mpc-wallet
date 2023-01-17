@@ -1,12 +1,11 @@
+pub mod db;
+
 #[macro_use]
 extern crate rocket;
 use dotenv::dotenv;
 use reqwest::Client;
 use rocket::serde::{json::Json, Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::vec;
-use uuid::Uuid;
 
 #[get("/")]
 fn index() -> &'static str {
@@ -39,29 +38,6 @@ lazy_static::lazy_static! {
     static ref PORT: String = std::env::var("PORT").expect("PORT should be set");
     static ref TX_SENDER_URL: String = std::env::var("TX_SENDER_URL").expect("TX_SENDER_URL should be set");
     static ref SM_MANAGER_URL: String = std::env::var("SM_MANAGER_URL").expect("SM_MANAGER_URL should be set");
-}
-
-// TODO: Will be replaced by DB
-fn get_local_share_by_address(address: &str) -> Option<&str> {
-    let address_book: HashMap<&str, &str> = HashMap::from([
-        (
-            "0x159D46720180113e2Ce97af425366778ECCcbA9C",
-            "./shares/local-share1-0.json",
-        ),
-        (
-            "0xF910Bd97b8F732Ce06c959DFDcE6De19623060B4",
-            "./shares/local-share1-1.json",
-        ),
-        (
-            "0x200dfB01148e580c59B53C6a35de9495cf10cf93",
-            "./shares/local-share1-2.json",
-        ),
-        (
-            "0xd1eD919ebF88baFab12FBCe1A6d1e1318a75b05b",
-            "./shares/local-share1-3.json",
-        ),
-    ]);
-    return address_book.get(address).copied();
 }
 
 #[post("/send-tx", format = "json", data = "<send_tx_req>")]
@@ -116,21 +92,14 @@ async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
     }
 
     // talk to SM
-    let local_share_path = match get_local_share_by_address(&send_tx_req.from_address) {
-        Some(local_share_path) => local_share_path,
-        None => {
-            return Json(SendTxRes {
-                success: false,
-                info: Some("cannot find local-share path by address".to_string()),
-            })
-        }
-    };
+    let db_conn = &mut db::establish_connection();
+    let local_share = db::get_local_share(db_conn, &send_tx_req.from_address).expect("cannot get local_share from db");
 
     // TODO: implement timeout for this function
-    let _singature = match tss_sm_client::sign(
+    let _sigature = match tss_sm_client::sign(
         tx_sender_res.message_to_sign,
-        PathBuf::from(local_share_path),
-        vec![2, 1],
+        local_share,
+        vec![1, 2],
         surf::Url::parse(&SM_MANAGER_URL).unwrap(),
         tx_sender_res.id.to_string(),
     )
@@ -140,6 +109,7 @@ async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
         Err(error) => format!("error in sign {:?}", error),
     };
 
+    println!("signature: {}", _sigature);
     Json(SendTxRes {
         success: true,
         info: None,
@@ -151,18 +121,18 @@ async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
 struct NewKeyRes {
     success: bool,
     user_id: String,
-    address: Option<Vec<u8>>,
+    address: Option<String>,
     info: Option<String>,
 }
 
 #[post("/new-key")]
 async fn new_key() -> Json<NewKeyRes> {
-    // TODO: replace by DB
-    let user_id = Uuid::new_v4();
+    let db_conn = &mut db::establish_connection();
+    let new_key_id = db::insert_new_key(db_conn);
 
     let client = Client::new();
     let mut body = std::collections::HashMap::new();
-    body.insert("userId", user_id.to_string());
+    body.insert("userId", new_key_id.to_string());
     let call_tx_sender_result = client
         .post(format!("{}{}", *TX_SENDER_URL, "/new-key"))
         .json(&body)
@@ -174,17 +144,16 @@ async fn new_key() -> Json<NewKeyRes> {
         Err(_) => {
             return Json(NewKeyRes {
                 success: false,
-                user_id: user_id.to_string(),
+                user_id: new_key_id.to_string(),
                 address: None,
                 info: Some("fail to call tx sender".to_string()),
             })
         }
     };
 
-    println!("user_id: {}", user_id);
-    let _local_key = tss_sm_client::keygen(
+    let local_key = tss_sm_client::keygen(
         surf::Url::parse(&SM_MANAGER_URL).unwrap(),
-        user_id.to_string(),
+        new_key_id.to_string(),
         2,
         1,
         2,
@@ -192,13 +161,20 @@ async fn new_key() -> Json<NewKeyRes> {
     .await
     .expect("unwrap local key");
 
-    // println!("{:?}", local_key.y_sum_s);
-    // TODO: write local_key to db or save to file
+    let pubkey_string =
+        serde_json::to_string(&local_key.y_sum_s).expect("error parsing local_key.y_sum_s");
+    db::fill_in_key_data(
+        db_conn,
+        new_key_id,
+        &pubkey_string,
+        &serde_json::to_string(&local_key).expect("error parsing local_key"),
+    );
 
+    println!("key generated. pub key: {}", pubkey_string);
     Json(NewKeyRes {
         success: true,
-        user_id: user_id.to_string(),
-        address: Some([1, 2, 3].to_vec()),
+        user_id: new_key_id.to_string(),
+        address: Some(pubkey_string),
         info: None,
     })
 }
