@@ -12,9 +12,9 @@ use round_based::async_runtime::AsyncProtocol;
 use round_based::Msg;
 
 mod gg20_sm_client;
+use curv::elliptic::curves::secp256_k1::Secp256k1;
 use gg20_sm_client::join_computation;
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::state_machine::keygen::LocalKey;
-use curv::elliptic::curves::secp256_k1::Secp256k1;
 
 pub async fn sign(
     data_to_sign: String,
@@ -23,7 +23,8 @@ pub async fn sign(
     address: surf::Url,
     room: String,
 ) -> Result<String> {
-    let local_share = serde_json::from_str(&local_share).context("parse local share")?;
+    let local_share =
+        serde_json::from_str::<LocalKey<Secp256k1>>(&local_share).context("parse local share")?;
     let number_of_parties = parties.len();
 
     let (i, incoming, outgoing) = join_computation(address.clone(), &format!("{}-offline", room))

@@ -2,7 +2,10 @@ pub mod db;
 
 #[macro_use]
 extern crate rocket;
+use crypto::digest::Digest;
+use crypto::sha3::Sha3;
 use dotenv::dotenv;
+use lazy_static::__Deref;
 use reqwest::Client;
 use rocket::serde::{json::Json, Deserialize, Serialize};
 use std::vec;
@@ -93,12 +96,13 @@ async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
 
     // talk to SM
     let db_conn = &mut db::establish_connection();
-    let local_share = db::get_local_share(db_conn, &send_tx_req.from_address).expect("cannot get local_share from db");
+    let local_share = db::get_local_share(db_conn, &send_tx_req.from_address)
+        .expect("cannot get local_share from db");
 
     // TODO: implement timeout for this function
-    let _sigature = match tss_sm_client::sign(
+    let sigature = match tss_sm_client::sign(
         tx_sender_res.message_to_sign,
-        local_share,
+        local_share.to_string(),
         vec![1, 2],
         surf::Url::parse(&SM_MANAGER_URL).unwrap(),
         tx_sender_res.id.to_string(),
@@ -109,7 +113,7 @@ async fn send_tx(send_tx_req: Json<SendTxReq>) -> Json<SendTxRes> {
         Err(error) => format!("error in sign {:?}", error),
     };
 
-    println!("signature: {}", _sigature);
+    println!("signature: {}", sigature);
     Json(SendTxRes {
         success: true,
         info: None,
@@ -123,6 +127,14 @@ struct NewKeyRes {
     user_id: String,
     address: Option<String>,
     info: Option<String>,
+}
+
+fn pubkey_to_address(uncompressed_pubkey: Vec<u8>) -> String {
+    let mut hasher = Sha3::keccak256();
+    hasher.input(&uncompressed_pubkey[1..]);
+    let hash_result = hasher.result_str();
+    let address = format!("0x{}", &hash_result[24..]);
+    address
 }
 
 #[post("/new-key")]
@@ -161,20 +173,20 @@ async fn new_key() -> Json<NewKeyRes> {
     .await
     .expect("unwrap local key");
 
-    let pubkey_string =
-        serde_json::to_string(&local_key.y_sum_s).expect("error parsing local_key.y_sum_s");
+    let address = pubkey_to_address(local_key.y_sum_s.to_bytes(false).deref().to_vec());
+    let address = eth_checksum::checksum(&address);
+
     db::fill_in_key_data(
         db_conn,
         new_key_id,
-        &pubkey_string,
+        &address,
         &serde_json::to_string(&local_key).expect("error parsing local_key"),
     );
 
-    println!("key generated. pub key: {}", pubkey_string);
     Json(NewKeyRes {
         success: true,
         user_id: new_key_id.to_string(),
-        address: Some(pubkey_string),
+        address: Some(address),
         info: None,
     })
 }

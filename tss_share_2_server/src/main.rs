@@ -1,9 +1,11 @@
 pub mod db;
 
+use crypto::digest::Digest;
+use crypto::sha3::Sha3;
 use dotenv::dotenv;
 use futures::StreamExt;
 use lapin::{options::*, types::FieldTable, Connection, ConnectionProperties};
-use lazy_static::lazy_static;
+use lazy_static::{lazy_static, __Deref};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -42,6 +44,14 @@ struct RabbitMQDelivery {
 #[serde(crate = "rocket::serde")]
 struct SignRes {
     success: bool,
+}
+
+fn pubkey_to_address(uncompressed_pubkey: Vec<u8>) -> String {
+    let mut hasher = Sha3::keccak256();
+    hasher.input(&uncompressed_pubkey[1..]);
+    let hash_result = hasher.result_str();
+    let address = format!("0x{}", &hash_result[24..]);
+    address
 }
 
 #[tokio::main]
@@ -94,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let sign_result = match tss_sm_client::sign(
                     sign_data.message.to_string(),
-                    local_share,
+                    local_share.to_string(),
                     vec![1, 2],
                     surf::Url::parse(&*SM_MANAGER_URL).unwrap(),
                     sign_data.id.to_string(),
@@ -107,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // send req to tx sender
                 let client = reqwest::Client::new();
+                println!("sign_result: {}", &sign_result);
                 let mut body_json = HashMap::new();
                 body_json.insert("id", sign_data.id.to_string());
                 body_json.insert("signature", sign_result);
@@ -119,7 +130,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .expect("error on calling tx sender");
 
                 delivery.ack(BasicAckOptions::default()).await.expect("ack");
-                println!("delivery ack: {:?}", delivery);
             });
         }
     });
@@ -134,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .expect("error on parsing RabbitMQ message")
                     .data;
 
-                let keygen_result = match tss_sm_client::keygen(
+                let _keygen_result = match tss_sm_client::keygen(
                     surf::Url::parse(&*SM_MANAGER_URL).unwrap(),
                     id.to_owned(),
                     1,
@@ -143,23 +153,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await
                 {
-                    Ok(result) => {
-                        let pubkey = serde_json::to_string(&result.y_sum_s)
-                            .expect("cannot get y_sum_s from result");
-                        let local_key = serde_json::to_string(&result).unwrap();
+                    Ok(local_key) => {
+                        let address =
+                            pubkey_to_address(local_key.y_sum_s.to_bytes(false).deref().to_vec());
+                        let address = eth_checksum::checksum(&address);
+
                         let db_conn = &mut db::establish_connection();
                         let key_inserted = db::insert_new_key(
                             db_conn,
                             id.as_str().parse::<i32>().expect("error parsing id"),
-                            &pubkey,
-                            &local_key,
+                            &address,
+                            &serde_json::to_string(&local_key).expect("error parsing local_key"),
                         );
                         format!("result of key insertion: {:?}", key_inserted)
                     }
                     Err(error) => format!("error in keygen {:?}", error),
                 };
 
-                println!("keygen_result: {}", keygen_result);
                 delivery.ack(BasicAckOptions::default()).await.expect("ack");
             });
         }
