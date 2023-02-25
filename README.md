@@ -6,9 +6,7 @@
 
 ## API documentation
 
-https://documenter.getpostman.com/view/24031838/2s8ZDR8RFF
-
-Can be edited by fdc.ai.dev@gmail.com account on Postman
+https://documenter.getpostman.com/view/12538945/2s93CPqXMu
 
 ## tss architecture
 
